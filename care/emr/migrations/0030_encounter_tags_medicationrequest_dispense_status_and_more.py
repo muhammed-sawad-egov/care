@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('emr', '0029_encounter_discharge_summary_advice'),
-        ('facility', '0478_facility_discount_codes_and_more'),
+        ('facility', '0002_new_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

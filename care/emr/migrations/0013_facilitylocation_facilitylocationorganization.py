@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('emr', '0012_alter_condition_encounter'),
-        ('facility', '0476_facility_default_internal_organization_and_more'),
+        ('facility', '0002_new_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

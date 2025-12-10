@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('emr', '0039_formsubmission_questionnaireresponse_form_submission'),
-        ('facility', '0478_facility_discount_codes_and_more'),
+        ('facility', '0002_new_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

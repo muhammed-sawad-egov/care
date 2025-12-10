@@ -22,7 +22,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('emr', '0033_healthcareservice_managing_organization'),
-        ('facility', '0478_facility_discount_codes_and_more'),
+        ('facility', '0002_new_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

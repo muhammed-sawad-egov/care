@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('facility', '0475_merge_20241223_2352'),
+        ('facility', '0001_new_initial'),
         ('security', '0002_remove_rolemodel_unique_order_and_more'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
