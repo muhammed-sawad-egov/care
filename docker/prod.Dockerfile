@@ -62,11 +62,15 @@ COPY --chown=django:django . $APP_HOME
 
 USER django
 
+RUN export DJANGO_SETTINGS_MODULE=config.settings.base \
+  && python manage.py collectstatic --noinput \
+  && python manage.py compilemessages -v 0
+
 HEALTHCHECK \
   --interval=30s \
-  --timeout=5s \
-  --start-period=10s \
-  --retries=12 \
+  --timeout=3s \
+  --start-period=5s \
+  --retries=20 \
   CMD ["./healthcheck.sh"]
 
 EXPOSE 9000
