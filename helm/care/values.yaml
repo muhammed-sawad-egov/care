@@ -1,0 +1,261 @@
+# Default values for the CARE chart.
+# Environment-specific overrides live in values-<env>.yaml.
+# Image tags are injected by CI at deploy time (see .github/workflows/deploy-production.yml).
+
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+# - name: ghcr-pull-secret
+
+backend:
+  image:
+    repository: ghcr.io/care-ecosystem/care
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # Non-secret Django settings, rendered as plain env vars on every backend pod.
+  # Changing any value here rolls all backend/celery pods automatically.
+  env:
+    DJANGO_SETTINGS_MODULE: config.settings.deployment
+    DJANGO_DEBUG: "False"
+    DJANGO_ALLOWED_HOSTS: '["*"]'
+    CORS_ALLOWED_ORIGINS: "[]"
+    CSRF_TRUSTED_ORIGINS: "[]"
+    GUNICORN_WORKERS: "2"
+    CELERY_WORKER_CONCURRENCY: "1"
+
+  # Name of a Secret managed outside the chart. When set, secretEnv is ignored.
+  existingSecret: ""
+  # Secret env vars, rendered into the chart-managed Secret when existingSecret is empty.
+  # Do NOT commit real values: put them in a gitignored secrets-<env>.yaml
+  # (see secrets.example.yaml) and pass it with `-f`. Empty values are left out of the Secret.
+  # Changing any value here rolls all backend/celery pods automatically.
+  secretEnv:
+    # Required. POSTGRES_HOST/PORT and REDIS_URL are set by the chart when the
+    # in-chart postgresql/redis are enabled.
+    DJANGO_SECRET_KEY: ""
+    POSTGRES_USER: ""
+    POSTGRES_PASSWORD: ""
+    POSTGRES_DB: ""
+    POSTGRES_HOST: ""
+    POSTGRES_PORT: ""
+    REDIS_URL: ""
+    # Auth
+    JWKS_BASE64: ""
+    # Object storage
+    BUCKET_KEY: ""
+    BUCKET_SECRET: ""
+    # Email / SMS / monitoring
+    EMAIL_HOST: ""
+    EMAIL_USER: ""
+    EMAIL_PASSWORD: ""
+    SNS_ACCESS_KEY: ""
+    SNS_SECRET_KEY: ""
+    GOOGLE_RECAPTCHA_SITE_KEY: ""
+    GOOGLE_RECAPTCHA_SECRET_KEY: ""
+    SENTRY_DSN: ""
+    # Plugins (read in plug_config.py)
+    DVDMS_API_ENDPOINT: ""
+    DVDMS_AUTH_TOKEN: ""
+    EAUSHADHI_API_SECRET_KEY: ""
+    PINELABS_SECURITY_TOKEN: ""
+    PINELABS_SECRET_KEY: ""
+    CARE_RADIOLOGY_WEBHOOK_SECRET: ""
+
+  api:
+    replicaCount: 2
+    port: 9000
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { memory: 1Gi }
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+
+  worker:
+    enabled: true
+    replicaCount: 1
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { memory: 1Gi }
+
+  # Celery beat must run as a single replica (it is the scheduler).
+  beat:
+    enabled: true
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { memory: 512Mi }
+
+  # Runs `manage.py migrate` as a Helm pre-install/pre-upgrade hook, so the
+  # schema is migrated before new API pods start. A failed migration aborts the upgrade.
+  migrations:
+    enabled: true
+    backoffLimit: 1
+    activeDeadlineSeconds: 900
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+frontend:
+  enabled: true
+  image:
+    # The care_fe image is built per environment because Vite bakes
+    # REACT_* variables (e.g. REACT_CARE_API_URL) in at build time.
+    repository: ghcr.io/care-ecosystem/care_fe
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  port: 80
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Optional in-chart Postgres and Redis, for local/dev clusters (k3d, kind, minikube).
+# Production should keep these off and use managed services via the backend Secret.
+# When enabled, the chart sets POSTGRES_HOST/PORT, DATABASE_URL and REDIS_URL on the
+# backend itself. The Secret still needs POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB,
+# which Postgres also uses to initialise the database.
+postgresql:
+  enabled: false
+  image:
+    repository: postgres
+    # Same major as docker-compose.yaml so pg_dump/pg_restore between them works.
+    tag: 17-alpine
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 5Gi
+    storageClass: ""   # empty = cluster default (local-path on k3d)
+    # Set to a node path to keep the data in a fixed directory (static hostPath PV) instead
+    # of a dynamically provisioned volume. On k3d, mount a host folder at this path on all
+    # nodes so the data survives `k3d cluster delete`. Single-node/dev use only.
+    hostPath: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+redis:
+  enabled: false
+  image:
+    repository: redis
+    # Same major as docker-compose.yaml so a shared dump.rdb loads in both.
+    tag: 8-alpine
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 1Gi
+    # Set to a node path to keep RDB snapshots there (see postgresql.persistence.hostPath).
+    # Empty = no persistence (cache + Celery queue only).
+    hostPath: ""
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+# Optional in-chart S3 storage for local/dev clusters: `silo`, the MinIO-compatible image
+# docker-compose.yaml uses, so both can share one data directory. Root credentials are the
+# Secret's BUCKET_KEY / BUCKET_SECRET. When enabled, the chart sets BUCKET_ENDPOINT (in-cluster)
+# and BUCKET_EXTERNAL_ENDPOINT (what browsers use for presigned URLs) on the backend.
+# Production should keep this off and point BUCKET_* at real object storage.
+minio:
+  enabled: false
+  image:
+    repository: pgsty/silo
+    tag: latest   # same tag as docker-compose.yaml; pin both together
+    pullPolicy: IfNotPresent
+  region: ap-south-1
+  # Created after every install/upgrade if missing. public = anonymous read-only.
+  buckets:
+    - name: patient-bucket
+    - name: facility-bucket
+      public: true
+  # Browser-facing host, routed by its own Ingress and the nginx proxy (e.g. minio.localhost).
+  host: ""
+  # BUCKET_EXTERNAL_ENDPOINT. Empty = http://<host>.
+  externalEndpoint: ""
+  # Annotations for the MinIO Ingress (uploads go straight to MinIO, so lift the body limit).
+  ingressAnnotations: {}
+  persistence:
+    size: 10Gi
+    storageClass: ""
+    # Node path for a static hostPath PV (see postgresql.persistence.hostPath).
+    hostPath: ""
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+# Plugin frontends (Vite module-federation remotes), one Deployment + Service each.
+# Images are built with docker/plugin-fe/Dockerfile from each care_*_fe repo.
+# Each plugin needs its OWN host: care_fe fetches plugin translations from
+# <origin of remoteEntry URL>/locale/<lang>.json, ignoring any sub-path.
+# Register each one in care_fe's REACT_ENABLED_APPS as:
+#   <org>/<repo>@<host>/assets/remoteEntry.js
+frontendPlugins: []
+# - name: radiology            # DNS-safe; resources are named <fullname>-fe-<name>
+#   host: radiology-fe.care.example.org
+#   image:
+#     repository: ghcr.io/care-ecosystem/care_radiology_fe
+#     tag: latest
+
+# Defaults merged into every frontendPlugins entry (any key can be overridden per plugin).
+frontendPluginDefaults:
+  image:
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  port: 8080
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Nginx reverse proxy in front of the API and frontend, exposed as its own Service.
+# Routes by Host header: backendHost -> API (also the default server), frontendHost -> frontend.
+nginx:
+  enabled: true
+  image:
+    # Unprivileged image: runs as non-root and listens on 8080.
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.27-alpine
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  port: 8080
+  # Empty -> fall back to ingress.backendHost / ingress.frontendHost.
+  backendHost: ""
+  frontendHost: ""
+  clientMaxBodySize: 20m
+  proxyReadTimeout: 120s
+  # Cluster DNS used to resolve Services per request. kube-dns is the Service name on
+  # k3s/k3d, kubeadm, EKS, GKE and AKS; change it if your cluster names it differently.
+  resolver: kube-dns.kube-system.svc.cluster.local
+  clusterDomain: cluster.local
+  service:
+    # ClusterIP | NodePort | LoadBalancer
+    type: ClusterIP
+    port: 80
+    nodePort: ""        # only used for NodePort/LoadBalancer
+    loadBalancerIP: ""  # only used for LoadBalancer
+    annotations: {}
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  # cert-manager.io/cluster-issuer: letsencrypt-prod
+  # nginx.ingress.kubernetes.io/proxy-body-size: 20m
+  backendHost: careapi.example.org
+  frontendHost: care.example.org
+  tls: []
+  # - secretName: care-tls
+  #   hosts: [careapi.example.org, care.example.org]

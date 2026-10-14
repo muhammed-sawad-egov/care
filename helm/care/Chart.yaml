@@ -1,0 +1,8 @@
+apiVersion: v2
+name: care
+description: CARE EMR - Django backend (API, Celery worker, Celery beat) and React frontend
+type: application
+version: 0.1.0
+# appVersion is informational only; the deployed images are set via
+# backend.image.tag / frontend.image.tag (CI passes these on every release).
+appVersion: "latest"

@@ -1,0 +1,8 @@
+# Extra overrides when CARE runs in k3d but MinIO / the radiology PACS stay in docker compose.
+# Publishes dcm4chee `arc` on the host so k3d pods can reach it at host.k3d.internal:18080.
+#   docker compose -f docker-compose.yaml -f docker-compose.local.yaml \
+#     -f care_radiology/docker-compose.radiology.yaml -f docker-compose.k3d.yaml up -d db ldap minio arc
+services:
+  arc:
+    ports:
+      - "18080:8080"

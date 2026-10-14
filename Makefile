@@ -5,6 +5,11 @@ DOCKER_VERSION := $(shell docker --version 2>/dev/null)
 
 docker_config_file := 'docker-compose.local.yaml'
 
+
+Radiology := ./care_radiology/docker-compose.radiology.yaml
+
+# Dvdms := ./care_dvdms/docker-compose.dvdms.yaml
+
 all:
 ifndef DOCKER_VERSION
     $(error "command docker is not available, please install Docker")
@@ -20,19 +25,19 @@ build:
 	docker compose -f docker-compose.yaml -f $(docker_config_file) build
 
 pull:
-	docker compose -f docker-compose.yaml -f $(docker_config_file) pull
+	docker compose -f docker-compose.yaml -f $(docker_config_file) -f $(Radiology) pull
 
 up:
-	docker compose -f docker-compose.yaml -f $(docker_config_file) up -d --wait
+	docker compose -f docker-compose.yaml -f $(docker_config_file) -f $(Radiology)  up -d --wait
 
 build-up-live:
-	docker compose -f docker-compose.yaml -f $(docker_config_file) up --build
+	docker compose -f docker-compose.yaml -f $(docker_config_file) -f $(Radiology)  up --build
 
 down:
-	docker compose -f docker-compose.yaml -f $(docker_config_file) down
+	docker compose -f docker-compose.yaml -f $(docker_config_file) -f $(Radiology)  down
 
 teardown:
-	docker compose -f docker-compose.yaml -f $(docker_config_file) down -v
+	docker compose -f docker-compose.yaml -f $(docker_config_file) -f $(Radiology)  down -v
 
 #TODO: remove alias load-dummy-data
 load-fixtures load-dummy-data:

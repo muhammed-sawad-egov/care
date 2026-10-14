@@ -1,0 +1,88 @@
+# Local k3d overrides. Plain HTTP on *.localhost, which resolves to
+# 127.0.0.1 without /etc/hosts edits. Assumes the k3d load balancer maps host :80 -> :80.
+# Postgres, Redis and MinIO keep their data under /mnt/care-data, a host folder mounted into
+# every node (`k3d cluster create -v "$HOME/care-data:/mnt/care-data@server:*;agent:*"`) and
+# shared with docker compose via docker-compose.shared-data.yaml. Run only one of k3d or
+# compose at a time: two servers on one data directory corrupt it.
+
+backend:
+  image:
+    repository: care
+    tag: local
+    pullPolicy: Never   # imported with `k3d image import`
+  # Secret values: helm/care/secrets-k3d.yaml (gitignored, see secrets.example.yaml).
+  env:
+    DJANGO_SETTINGS_MODULE: config.settings.deployment
+    DJANGO_SECURE_SSL_REDIRECT: "False"
+    DJANGO_ALLOWED_HOSTS: '["*"]'
+    CORS_ALLOWED_ORIGINS: '["http://care.localhost"]'
+    CSRF_TRUSTED_ORIGINS: '["http://care.localhost", "http://careapi.localhost"]'
+    CURRENT_DOMAIN: care.localhost
+    BACKEND_DOMAIN: careapi.localhost
+    GUNICORN_WORKERS: "2"
+    CELERY_WORKER_CONCURRENCY: "1"
+    # Object storage: in-chart MinIO (minio.* below sets BUCKET_ENDPOINT/EXTERNAL_ENDPOINT).
+    # BUCKET_KEY / BUCKET_SECRET go in secrets-k3d.yaml (= docker compose MinIO root login).
+    BUCKET_REGION: ap-south-1
+    FILE_UPLOAD_BUCKET: patient-bucket
+    FACILITY_S3_BUCKET: facility-bucket
+    # Radiology PACS (dcm4chee `arc` from docker-compose.radiology.yaml), published on host
+    # port 18080 by docker-compose.k3d.yaml. Only the backend calls this URL.
+    CARE_RADIOLOGY_DCM4CHEE_DICOMWEB_BASEURL: http://host.k3d.internal:18080/dcm4chee-arc/aets/DCM4CHEE
+  api:
+    replicaCount: 1
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { memory: 1536Mi }
+  migrations:
+    activeDeadlineSeconds: 1800
+
+postgresql:
+  enabled: true
+  persistence:
+    size: 2Gi
+    # The Secret's POSTGRES_* must match docker/.prebuilt.env (the data was created there).
+    hostPath: /mnt/care-data/postgres
+
+redis:
+  enabled: true
+  persistence:
+    hostPath: /mnt/care-data/redis
+
+minio:
+  enabled: true
+  host: minio.localhost
+  ingressAnnotations:
+    nginx.org/client-max-body-size: "0"   # presigned uploads go straight to MinIO
+  persistence:
+    size: 20Gi
+    hostPath: /mnt/care-data/minio
+
+frontend:
+  image:
+    repository: care_fe
+    tag: local
+    pullPolicy: Never
+  replicaCount: 1
+
+nginx:
+  replicaCount: 1
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    # F5 NGINX Inc controller (nginx-ingress chart). For community ingress-nginx use
+    # nginx.ingress.kubernetes.io/proxy-body-size instead.
+    nginx.org/client-max-body-size: 20m
+  backendHost: careapi.localhost
+  frontendHost: care.localhost
+  tls: []
+
+frontendPlugins:
+  - name: radiology
+    host: radiology-fe.localhost
+    image: { repository: care_radiology_fe, tag: local, pullPolicy: Never }
+  - name: dvdms
+    host: dvdms-fe.localhost
+    image: { repository: care_dvdms_fe, tag: local, pullPolicy: Never }

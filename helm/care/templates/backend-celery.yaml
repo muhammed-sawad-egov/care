@@ -1,0 +1,74 @@
+{{- if .Values.backend.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "care.fullname" . }}-worker
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.backend.worker.replicaCount }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "care.selectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "worker") | nindent 8 }}
+      {{- include "care.backendPodAnnotations" . | nindent 6 }}
+    spec:
+      {{- include "care.backendPodCommon" . | nindent 6 }}
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          image: {{ include "care.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["bash", "celery_worker.sh"]
+          {{- include "care.backendEnv" . | nindent 10 }}
+          livenessProbe:
+            exec: { command: ["./healthcheck.sh"] }
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 20
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.worker.resources | nindent 12 }}
+{{- end }}
+{{- if .Values.backend.beat.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "care.fullname" . }}-beat
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: beat
+spec:
+  # Exactly one scheduler: Recreate avoids two beats overlapping during a rollout.
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "care.selectorLabels" (dict "ctx" . "component" "beat") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "beat") | nindent 8 }}
+      {{- include "care.backendPodAnnotations" . | nindent 6 }}
+    spec:
+      {{- include "care.backendPodCommon" . | nindent 6 }}
+      containers:
+        - name: beat
+          image: {{ include "care.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["bash", "celery_beat.sh"]
+          {{- include "care.backendEnv" . | nindent 10 }}
+          readinessProbe:
+            exec: { command: ["./healthcheck.sh"] }
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.backend.beat.resources | nindent 12 }}
+{{- end }}

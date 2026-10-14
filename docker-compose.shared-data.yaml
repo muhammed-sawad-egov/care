@@ -1,0 +1,23 @@
+# Use the same data directories as the k3d deployment (helm/care/values-k3d.yaml), so you can
+# switch between docker compose and k3d without copying data:
+#   postgres -> ~/care-data/postgres/pgdata  (k3d: hostPath /mnt/care-data/postgres, PGDATA=pgdata)
+#   redis    -> ~/care-data/redis            (k3d: hostPath /mnt/care-data/redis)
+#   minio    -> ~/care-data/minio            (k3d: hostPath /mnt/care-data/minio)
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.local.yaml \
+#     [-f care_radiology/docker-compose.radiology.yaml] -f docker-compose.shared-data.yaml up -d
+#
+# NEVER run compose and k3d at the same time: two servers on one data directory corrupt it.
+# Stop k3d's first:
+#   kubectl -n care scale deploy/care-api deploy/care-worker deploy/care-beat deploy/care-redis \
+#     statefulset/care-postgres statefulset/care-minio --replicas=0
+services:
+  db:
+    volumes:
+      - ${CARE_DATA_DIR:-${HOME}/care-data}/postgres/pgdata:/var/lib/postgresql/data
+  redis:
+    volumes:
+      - ${CARE_DATA_DIR:-${HOME}/care-data}/redis:/data
+  minio:
+    volumes:
+      - ${CARE_DATA_DIR:-${HOME}/care-data}/minio:/data

@@ -1,0 +1,73 @@
+{{- range .Values.frontendPlugins }}
+{{- $p := mergeOverwrite (deepCopy $.Values.frontendPluginDefaults) . -}}
+{{- $name := include "care.pluginName" (dict "ctx" $ "name" (required "frontendPlugins[].name is required" $p.name)) -}}
+{{- $component := printf "fe-%s" $p.name | trunc 63 | trimSuffix "-" -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "care.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: {{ $p.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      {{- include "care.selectorLabels" (dict "ctx" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" $ "component" $component) | nindent 8 }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $p.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $p.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $p.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: plugin
+          image: {{ required "frontendPlugins[].image.repository is required" $p.image.repository }}:{{ required "frontendPlugins[].image.tag is required" $p.image.tag }}
+          imagePullPolicy: {{ $p.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $p.port }}
+          readinessProbe:
+            httpGet: { path: /assets/remoteEntry.js, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
+          resources:
+            {{- toYaml $p.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "care.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  selector:
+    {{- include "care.selectorLabels" (dict "ctx" $ "component" $component) | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}

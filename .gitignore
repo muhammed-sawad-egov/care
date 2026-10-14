@@ -328,6 +328,7 @@ tags
 pyvenv.cfg
 pip-selfcheck.json
 .env
+docker/.plugins.env
 
 
 ### Project template
@@ -340,6 +341,7 @@ care/media/*
 
 
 .env
+docker/.plugins.env
 .envs/*
 !.envs/.local/
 
@@ -363,3 +365,7 @@ care_db.dump
 .nix-data
 
 import/
+
+# Helm per-environment secret values
+helm/care/secrets-*.yaml
+helm/care/secrets-*.yaml.bak

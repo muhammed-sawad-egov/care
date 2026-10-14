@@ -1,0 +1,44 @@
+{{- if .Values.backend.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Revision suffix keeps each upgrade's Job (and its logs) distinct.
+  name: {{ include "care.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # With in-chart Postgres the database doesn't exist before install, so migrate
+    # after it instead (the celery beat container also migrates on start).
+    helm.sh/hook: {{ if .Values.postgresql.enabled }}post-install{{ else }}pre-install{{ end }},pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.backend.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.backend.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+      {{- include "care.backendPodAnnotations" . | nindent 6 }}
+    spec:
+      restartPolicy: Never
+      {{- include "care.backendPodCommon" . | nindent 6 }}
+      containers:
+        - name: migrate
+          image: {{ include "care.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command:
+            - bash
+            - -ec
+            - |
+              if [ -z "${DATABASE_URL}" ]; then
+                export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+              fi
+              ./wait_for_db.sh
+              python manage.py migrate --noinput
+              python manage.py sync_permissions_roles
+          {{- include "care.backendEnv" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.backend.api.resources | nindent 12 }}
+{{- end }}

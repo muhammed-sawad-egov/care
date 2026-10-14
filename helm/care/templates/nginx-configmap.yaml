@@ -1,0 +1,105 @@
+{{- if .Values.nginx.enabled }}
+{{- $nx := .Values.nginx -}}
+{{- $fullname := include "care.fullname" . -}}
+{{- $backendHost := default .Values.ingress.backendHost $nx.backendHost -}}
+{{- $frontendHost := default .Values.ingress.frontendHost $nx.frontendHost -}}
+{{- $svcSuffix := printf "%s.svc.%s" .Release.Namespace $nx.clusterDomain -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-nginx
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+data:
+  default.conf: |
+    # Keep the client's original scheme when an upstream LB/ingress already set it,
+    # so Django's SECURE_SSL_REDIRECT doesn't loop.
+    map $http_x_forwarded_proto $care_forwarded_proto {
+      default $http_x_forwarded_proto;
+      ""      $scheme;
+    }
+
+    client_max_body_size {{ $nx.clientMaxBodySize }};
+
+    # Upstreams are looked up per request (proxy_pass with a variable) instead of once at
+    # startup, so a missing/not-yet-created Service only 502s its own host instead of
+    # crash-looping the whole proxy. Variable upstreams need FQDNs: no search domains.
+    resolver {{ $nx.resolver }} valid=10s ipv6=off;
+    resolver_timeout 5s;
+
+    # API (also the default server, so requests by IP / unknown Host reach Django).
+    server {
+      listen {{ $nx.port }} default_server;
+      server_name {{ $backendHost }};
+
+      location = /nginx-health {
+        access_log off;
+        return 200 "ok\n";
+      }
+
+      location / {
+        set $care_upstream http://{{ $fullname }}-api.{{ $svcSuffix }}:80;
+        proxy_pass $care_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $care_forwarded_proto;
+        proxy_read_timeout {{ $nx.proxyReadTimeout }};
+      }
+    }
+    {{- if .Values.frontend.enabled }}
+
+    # Frontend
+    server {
+      listen {{ $nx.port }};
+      server_name {{ $frontendHost }};
+
+      location / {
+        set $care_upstream http://{{ $fullname }}-frontend.{{ $svcSuffix }}:80;
+        proxy_pass $care_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $care_forwarded_proto;
+      }
+    }
+    {{- end }}
+    {{- if and .Values.minio.enabled .Values.minio.host }}
+
+    # MinIO (S3): presigned URLs are signed for this Host, so pass it through unchanged.
+    server {
+      listen {{ $nx.port }};
+      server_name {{ .Values.minio.host }};
+      client_max_body_size 0;
+
+      location / {
+        set $care_upstream http://{{ $fullname }}-minio.{{ $svcSuffix }}:9000;
+        proxy_pass $care_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $care_forwarded_proto;
+        proxy_request_buffering off;
+        proxy_buffering off;
+      }
+    }
+    {{- end }}
+    {{- range .Values.frontendPlugins }}
+
+    # Plugin frontend: {{ .name }}
+    server {
+      listen {{ $nx.port }};
+      server_name {{ required "frontendPlugins[].host is required" .host }};
+
+      location / {
+        set $care_upstream http://{{ include "care.pluginName" (dict "ctx" $ "name" .name) }}.{{ $svcSuffix }}:80;
+        proxy_pass $care_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+      }
+    }
+    {{- end }}
+{{- end }}

@@ -1,0 +1,81 @@
+{{- if .Values.postgresql.enabled }}
+{{- $pg := .Values.postgresql -}}
+# In-chart Postgres for local/dev clusters: single replica, no backups or HA.
+# User/password/database come from the backend Secret (POSTGRES_USER/PASSWORD/DB).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "care.fullname" . }}-postgres
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "care.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "care.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: {{ $pg.image.repository }}:{{ $pg.image.tag }}
+          imagePullPolicy: {{ $pg.image.pullPolicy }}
+          env:
+            {{- range list "POSTGRES_USER" "POSTGRES_PASSWORD" "POSTGRES_DB" }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "care.backendSecretName" $ }}
+                  key: {{ . }}
+            {{- end }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""] }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            {{- toYaml $pg.resources | nindent 12 }}
+  # The PVC is not deleted by `helm uninstall`; delete it by hand to wipe the data.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        {{- include "care.pvcStorage" (dict "ctx" . "component" "postgres" "persistence" $pg.persistence) | nindent 8 }}
+{{- if $pg.persistence.hostPath }}
+---
+{{ include "care.hostPathPV" (dict "ctx" . "component" "postgres" "claim" (printf "data-%s-postgres-0" (include "care.fullname" .)) "persistence" $pg.persistence) }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "care.fullname" . }}-postgres
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    {{- include "care.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+{{- end }}

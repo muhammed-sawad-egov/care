@@ -1,0 +1,168 @@
+{{- if .Values.minio.enabled }}
+{{- $mn := .Values.minio -}}
+{{- $fullname := include "care.fullname" . -}}
+{{- $secret := include "care.backendSecretName" . -}}
+# In-chart S3 (MinIO-compatible `silo`, same image as docker-compose.yaml) for local/dev
+# clusters. Root credentials are the backend's BUCKET_KEY / BUCKET_SECRET. Keep them stable:
+# MinIO encrypts its config in the data dir with them.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-minio
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  serviceName: {{ $fullname }}-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "care.selectorLabels" (dict "ctx" . "component" "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "minio") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: minio
+          image: {{ $mn.image.repository }}:{{ $mn.image.tag }}
+          imagePullPolicy: {{ $mn.image.pullPolicy }}
+          command: ["silo", "server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: BUCKET_KEY } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: BUCKET_SECRET } }
+            - name: AWS_DEFAULT_REGION
+              value: {{ $mn.region | quote }}
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: s3 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: s3 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml $mn.resources | nindent 12 }}
+  # The PVC is not deleted by `helm uninstall`; delete it by hand to wipe the data.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        {{- include "care.pvcStorage" (dict "ctx" . "component" "minio" "persistence" $mn.persistence) | nindent 8 }}
+{{- if $mn.persistence.hostPath }}
+---
+{{ include "care.hostPathPV" (dict "ctx" . "component" "minio" "claim" (printf "data-%s-minio-0" $fullname) "persistence" $mn.persistence) }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-minio
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  selector:
+    {{- include "care.selectorLabels" (dict "ctx" . "component" "minio") | nindent 4 }}
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+    - name: console
+      port: 9001
+      targetPort: console
+---
+# Creates the buckets (idempotent) after every install/upgrade, like docker/minio/init-script.sh.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-minio-buckets-{{ .Release.Revision }}
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-buckets
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "minio-buckets") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: buckets
+          image: {{ $mn.image.repository }}:{{ $mn.image.tag }}
+          imagePullPolicy: {{ $mn.image.pullPolicy }}
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: BUCKET_KEY } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: BUCKET_SECRET } }
+          command:
+            - sh
+            - -ec
+            - |
+              until curl -fs http://{{ $fullname }}-minio:9000/minio/health/ready; do
+                echo "waiting for minio..."; sleep 5
+              done
+              mc alias set local http://{{ $fullname }}-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              {{- range $mn.buckets }}
+              mc mb --ignore-existing local/{{ .name }}
+              {{- if .public }}
+              # anonymous read only (docker compose sets read+write "public")
+              mc anonymous set download local/{{ .name }}
+              {{- end }}
+              {{- end }}
+              echo "buckets ready"
+{{- if $mn.host }}
+---
+# Browsers fetch/upload files with presigned URLs signed for BUCKET_EXTERNAL_ENDPOINT, so the
+# Host header must reach MinIO unchanged; hence a dedicated Ingress without a body-size cap.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-minio
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+  {{- with $mn.ingressAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ $mn.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-minio
+                port: { name: s3 }
+{{- end }}
+{{- end }}

@@ -26,7 +26,8 @@ ENV ADDITIONAL_PLUGS=$ADDITIONAL_PLUGS
 
 COPY . $APP_HOME/
 
-RUN --mount=type=cache,target=/root/.cache/pip python3 $APP_HOME/install_plugins.py
+ARG PLUGINS_REFRESH=""
+RUN --mount=type=cache,target=/root/.cache/pip echo "plugins refresh: ${PLUGINS_REFRESH}" && python3 $APP_HOME/install_plugins.py
 
 HEALTHCHECK \
   --interval=10s \

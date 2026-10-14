@@ -1,0 +1,90 @@
+{{- if .Values.redis.enabled }}
+{{- $rd := .Values.redis -}}
+# In-chart Redis for local/dev clusters: single replica (cache + Celery broker). Ephemeral unless
+# persistence.hostPath is set, then RDB snapshots go there (shared with docker compose on k3d).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "care.fullname" . }}-redis
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "care.selectorLabels" (dict "ctx" . "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "redis") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: {{ $rd.image.repository }}:{{ $rd.image.tag }}
+          imagePullPolicy: {{ $rd.image.pullPolicy }}
+          {{- if not $rd.persistence.hostPath }}
+          args: ["--save", "", "--appendonly", "no"]
+          {{- end }}
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            {{- toYaml $rd.resources | nindent 12 }}
+          {{- if $rd.persistence.hostPath }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- end }}
+      {{- if $rd.persistence.hostPath }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-{{ include "care.fullname" . }}-redis
+      {{- end }}
+{{- if $rd.persistence.hostPath }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-{{ include "care.fullname" . }}-redis
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  annotations:
+    # Keep it on uninstall like the PV, else the retained PV can't re-bind on reinstall.
+    helm.sh/resource-policy: keep
+spec:
+  {{- include "care.pvcStorage" (dict "ctx" . "component" "redis" "persistence" $rd.persistence) | nindent 2 }}
+---
+{{ include "care.hostPathPV" (dict "ctx" . "component" "redis" "claim" (printf "data-%s-redis" (include "care.fullname" .)) "persistence" $rd.persistence) }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "care.fullname" . }}-redis
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  selector:
+    {{- include "care.selectorLabels" (dict "ctx" . "component" "redis") | nindent 4 }}
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+{{- end }}

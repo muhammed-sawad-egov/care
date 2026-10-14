@@ -8,6 +8,8 @@ services:
         ADDITIONAL_PLUGS: ${ADDITIONAL_PLUGS:-}
     env_file:
       - ./docker/.local.env
+      - path: ./docker/.plugins.env  # gitignored plugin secrets
+        required: false
     volumes:
       - .:/app
     entrypoint: ["bash", "scripts/start-dev.sh"]
@@ -27,6 +29,8 @@ services:
     image: care_local
     env_file:
       - ./docker/.local.env
+      - path: ./docker/.plugins.env  # gitignored plugin secrets
+        required: false
     entrypoint: ["bash", "scripts/celery-dev.sh"]
     restart: unless-stopped
     depends_on:

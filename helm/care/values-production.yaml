@@ -1,0 +1,32 @@
+# Production overrides. Non-secret values only — secrets come from secrets-production.yaml
+# (gitignored; CI writes it from the HELM_SECRETS_YAML environment secret).
+# Image tags are NOT set here; CI sets them with --set on each approved release.
+
+backend:
+  env:
+    DJANGO_SETTINGS_MODULE: config.settings.deployment
+    DJANGO_ALLOWED_HOSTS: '["careapi.example.org"]'
+    CORS_ALLOWED_ORIGINS: '["https://care.example.org"]'
+    CSRF_TRUSTED_ORIGINS: '["https://care.example.org", "https://careapi.example.org"]'
+    CURRENT_DOMAIN: care.example.org
+    BACKEND_DOMAIN: careapi.example.org
+    SENTRY_ENVIRONMENT: production
+    GUNICORN_WORKERS: "4"
+    CELERY_WORKER_CONCURRENCY: "2"
+  api:
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: 20m
+  backendHost: careapi.example.org
+  frontendHost: care.example.org
+  tls:
+    - secretName: care-tls
+      hosts: [careapi.example.org, care.example.org]

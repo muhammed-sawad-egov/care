@@ -1,0 +1,93 @@
+{{- if .Values.nginx.enabled }}
+{{- $nx := .Values.nginx -}}
+{{- $fullname := include "care.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-nginx
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+spec:
+  replicas: {{ $nx.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      {{- include "care.selectorLabels" (dict "ctx" . "component" "nginx") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "care.selectorLabels" (dict "ctx" . "component" "nginx") | nindent 8 }}
+      annotations:
+        # Roll the pods whenever the rendered nginx config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/nginx-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $nx.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $nx.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $nx.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nginx
+          image: {{ $nx.image.repository }}:{{ $nx.image.tag }}
+          imagePullPolicy: {{ $nx.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $nx.port }}
+          readinessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            periodSeconds: 30
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+          resources:
+            {{- toYaml $nx.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-nginx
+  labels:
+    {{- include "care.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+  {{- with $nx.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $nx.service.type }}
+  {{- if and (eq $nx.service.type "LoadBalancer") $nx.service.loadBalancerIP }}
+  loadBalancerIP: {{ $nx.service.loadBalancerIP }}
+  {{- end }}
+  selector:
+    {{- include "care.selectorLabels" (dict "ctx" . "component" "nginx") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $nx.service.port }}
+      targetPort: http
+      {{- if and (has $nx.service.type (list "NodePort" "LoadBalancer")) $nx.service.nodePort }}
+      nodePort: {{ $nx.service.nodePort }}
+      {{- end }}
+{{- end }}

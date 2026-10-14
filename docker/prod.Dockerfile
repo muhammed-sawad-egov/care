@@ -36,7 +36,10 @@ COPY install_plugins.py plug_config.py $APP_HOME/
 
 ARG ADDITIONAL_PLUGS=""
 ENV ADDITIONAL_PLUGS=$ADDITIONAL_PLUGS
-RUN python3 $APP_HOME/install_plugins.py
+# Plugins track branches, so a cached layer would keep old plugin code; pass a new value
+# (e.g. CI run id, or $(date +%s) locally) to re-fetch them.
+ARG PLUGINS_REFRESH=""
+RUN echo "plugins refresh: ${PLUGINS_REFRESH}" && python3 $APP_HOME/install_plugins.py
 
 # ---
 FROM base AS runtime

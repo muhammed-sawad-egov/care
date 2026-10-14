@@ -1,0 +1,17 @@
+CARE deployed.
+  backend image:  {{ include "care.backendImage" . }}
+{{- if .Values.frontend.enabled }}
+  frontend image: {{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+  API: https://{{ .Values.ingress.backendHost }}
+{{- if .Values.frontend.enabled }}
+  UI:  https://{{ .Values.ingress.frontendHost }}
+{{- end }}
+{{- end }}
+{{- if .Values.nginx.enabled }}
+  nginx service:  {{ include "care.fullname" . }}-nginx ({{ .Values.nginx.service.type }}, port {{ .Values.nginx.service.port }})
+{{- end }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
